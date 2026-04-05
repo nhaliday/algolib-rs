@@ -62,7 +62,6 @@ mod tests {
         let mut finish_time = vec![invalid_time; gr.node_count()];
         let mut has_tree_edge = gr.visit_map();
         let mut edges = HashSet::new();
-        let mut edge_weights = std::collections::HashMap::new();
 
         depth_first_search(&gr, Some(n(0)), |evt| match evt {
             DfsEvent::Discover(n, t) => discover_time[n.index()] = t,
@@ -72,18 +71,15 @@ mod tests {
                 assert!(discover_time[v.index()] == invalid_time);
                 assert!(discover_time[u.index()] != invalid_time);
                 assert!(finish_time[u.index()] == invalid_time);
-                edges.insert((u, v));
-                edge_weights.insert((u, v), w);
+                edges.insert((u, v, w));
             }
             DfsEvent::BackEdge(u, v, w) => {
                 assert!(discover_time[v.index()] != invalid_time);
                 assert!(finish_time[v.index()] == invalid_time);
-                edges.insert((u, v));
-                edge_weights.insert((u, v), w);
+                edges.insert((u, v, w));
             }
             DfsEvent::CrossForwardEdge(u, v, w) => {
-                edges.insert((u, v));
-                edge_weights.insert((u, v), w);
+                edges.insert((u, v, w));
             }
         });
 
@@ -94,15 +90,9 @@ mod tests {
             edges,
             set(gr.edge_references().map(|e| {
                 use petgraph::visit::EdgeRef;
-                (e.source(), e.target())
+                (e.source(), e.target(), *e.weight())
             }))
         );
-        // Verify weights were passed through correctly.
-        for e in gr.edge_references() {
-            use petgraph::visit::EdgeRef;
-            let key = (e.source(), e.target());
-            assert_eq!(edge_weights[&key], *e.weight());
-        }
     }
 
     /// Parallel of petgraph's tests/graph.rs::dfs_visit, second sub-test:
