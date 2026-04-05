@@ -179,9 +179,9 @@ mod tests {
                 if n == prune {
                     return Control::Prune;
                 }
-            } else if let DfsEvent::TreeEdge(_, v, _) = event {
+            } else if let DfsEvent::TreeEdge(u, v, _) = event {
                 if v == nongoal {
-                    return Control::Break(v);
+                    return Control::Break(u);
                 }
             }
             Control::Continue
