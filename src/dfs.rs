@@ -178,4 +178,56 @@ mod tests {
         });
         assert!(ret.break_value().is_none());
     }
+
+    /// Parallel of petgraph's tests/quickcheck.rs::dfs_visit:
+    /// property-based test verifying event invariants on random weighted graphs.
+    #[quickcheck_macros::quickcheck]
+    fn event_invariants_quickcheck(gr: petgraph::Graph<(), i32>, node: usize) -> bool {
+        if gr.node_count() == 0 {
+            return true;
+        }
+        let start_node = petgraph::graph::node_index(node % gr.node_count());
+
+        let invalid_time = Time(!0);
+        let mut discover_time = vec![invalid_time; gr.node_count()];
+        let mut finish_time = vec![invalid_time; gr.node_count()];
+        let mut has_tree_edge = gr.visit_map();
+        let mut edges = HashSet::new();
+
+        depth_first_search(
+            &gr,
+            Some(start_node).into_iter().chain(gr.node_indices()),
+            |evt| match evt {
+                DfsEvent::Discover(n, t) => discover_time[n.index()] = t,
+                DfsEvent::Finish(n, t) => finish_time[n.index()] = t,
+                DfsEvent::TreeEdge(u, v, w) => {
+                    assert!(has_tree_edge.visit(v), "Two tree edges to {v:?}!");
+                    assert!(discover_time[v.index()] == invalid_time);
+                    assert!(discover_time[u.index()] != invalid_time);
+                    assert!(finish_time[u.index()] == invalid_time);
+                    edges.insert((u, v, w));
+                }
+                DfsEvent::BackEdge(u, v, w) => {
+                    assert!(discover_time[v.index()] != invalid_time);
+                    assert!(finish_time[v.index()] == invalid_time);
+                    edges.insert((u, v, w));
+                }
+                DfsEvent::CrossForwardEdge(u, v, w) => {
+                    edges.insert((u, v, w));
+                }
+            },
+        );
+
+        assert!(discover_time.iter().all(|x| *x != invalid_time));
+        assert!(finish_time.iter().all(|x| *x != invalid_time));
+        assert_eq!(edges.len(), gr.edge_count());
+        assert_eq!(
+            edges,
+            set(gr.edge_references().map(|e| {
+                use petgraph::visit::EdgeRef;
+                (e.source(), e.target(), *e.weight())
+            }))
+        );
+        true
+    }
 }
