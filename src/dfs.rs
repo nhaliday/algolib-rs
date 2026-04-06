@@ -69,30 +69,6 @@ mod tests {
         assert_eq!(back_edges, vec![(n(1), n(0))]);
     }
 
-    /// Undirected DFS produces only tree edges and back edges — never cross/forward edges.
-    #[quickcheck_macros::quickcheck]
-    fn undirected_no_cross_forward(
-        gr: petgraph::Graph<(), i32, petgraph::Undirected>,
-        node: usize,
-    ) -> bool {
-        if gr.node_count() == 0 {
-            return true;
-        }
-        let start_node = petgraph::graph::node_index(node % gr.node_count());
-
-        let mut saw_cross_forward = false;
-        depth_first_search(
-            &gr,
-            Some(start_node).into_iter().chain(gr.node_indices()),
-            |evt| {
-                if let DfsEvent::CrossForwardEdge(..) = evt {
-                    saw_cross_forward = true;
-                }
-            },
-        );
-        !saw_cross_forward
-    }
-
     fn set<I: IntoIterator>(iter: I) -> HashSet<I::Item>
     where
         I::Item: std::hash::Hash + Eq,
@@ -288,6 +264,94 @@ mod tests {
                 (e.source(), e.target(), *e.weight())
             }))
         );
+        true
+    }
+
+    /// Undirected DFS produces only tree edges and back edges — never cross/forward edges.
+    #[quickcheck_macros::quickcheck]
+    fn undirected_no_cross_forward(
+        gr: petgraph::Graph<(), i32, petgraph::Undirected>,
+        node: usize,
+    ) -> bool {
+        if gr.node_count() == 0 {
+            return true;
+        }
+        let start_node = petgraph::graph::node_index(node % gr.node_count());
+
+        let mut saw_cross_forward = false;
+        depth_first_search(
+            &gr,
+            Some(start_node).into_iter().chain(gr.node_indices()),
+            |evt| {
+                if let DfsEvent::CrossForwardEdge(..) = evt {
+                    saw_cross_forward = true;
+                }
+            },
+        );
+        !saw_cross_forward
+    }
+
+    /// Parenthesis theorem: for any two nodes u, v the discover/finish intervals
+    /// [d(u), f(u)] and [d(v), f(v)] are either disjoint or one contains the other.
+    #[quickcheck_macros::quickcheck]
+    fn parenthesis_theorem(gr: petgraph::Graph<(), i32>, node: usize) -> bool {
+        if gr.node_count() == 0 {
+            return true;
+        }
+        let start_node = petgraph::graph::node_index(node % gr.node_count());
+
+        let n = gr.node_count();
+        let invalid_time = Time(!0);
+        let mut discover_time = vec![invalid_time; n];
+        let mut finish_time = vec![invalid_time; n];
+        let mut parent = vec![usize::MAX; n];
+
+        depth_first_search(
+            &gr,
+            Some(start_node).into_iter().chain(gr.node_indices()),
+            |evt| match evt {
+                DfsEvent::Discover(n, t) => discover_time[n.index()] = t,
+                DfsEvent::Finish(n, t) => finish_time[n.index()] = t,
+                DfsEvent::TreeEdge(u, v, _) => parent[v.index()] = u.index(),
+                _ => {}
+            },
+        );
+
+        let is_ancestor = |ancestor: usize, mut descendant: usize| -> bool {
+            while descendant != usize::MAX {
+                if descendant == ancestor {
+                    return true;
+                }
+                descendant = parent[descendant];
+            }
+            false
+        };
+
+        for u in 0..n {
+            let (du, fu) = (discover_time[u].0, finish_time[u].0);
+            for v in (u + 1)..n {
+                let (dv, fv) = (discover_time[v].0, finish_time[v].0);
+                let disjoint = fu < dv || fv < du;
+                let u_contains_v = du < dv && fv < fu;
+                let v_contains_u = dv < du && fu < fv;
+                // Intervals are either disjoint or one contains the other.
+                assert!(
+                    disjoint || u_contains_v || v_contains_u,
+                    "Partial overlap for nodes {u} and {v}"
+                );
+                // Containment iff ancestor relationship.
+                assert_eq!(
+                    u_contains_v,
+                    is_ancestor(u, v),
+                    "u={u} contains v={v} but not ancestor"
+                );
+                assert_eq!(
+                    v_contains_u,
+                    is_ancestor(v, u),
+                    "v={v} contains u={u} but not ancestor"
+                );
+            }
+        }
         true
     }
 }
