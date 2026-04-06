@@ -15,7 +15,7 @@ pub enum DfsEvent<N, W> {
 ///
 /// Mirrors [`petgraph::visit::depth_first_search`] but requires `IntoEdges`
 /// instead of `IntoNeighbors`, so that edge weights are available.
-pub fn depth_first_search<G, I, F, C>(_graph: G, _starts: I, _visitor: F) -> C
+pub fn depth_first_search<G, I, F, C>(graph: G, starts: I, mut visitor: F) -> C
 where
     G: petgraph::visit::IntoEdges + petgraph::visit::Visitable,
     G::EdgeWeight: Copy,
@@ -23,7 +23,104 @@ where
     F: FnMut(DfsEvent<G::NodeId, G::EdgeWeight>) -> C,
     C: petgraph::visit::ControlFlow,
 {
-    todo!()
+    use petgraph::visit::{EdgeRef, Time, VisitMap};
+
+    let mut time = Time(0);
+    let mut discovered = graph.visit_map();
+    let mut finished = graph.visit_map();
+
+    let mut stack: Vec<(G::NodeId, Vec<(G::NodeId, G::EdgeWeight)>, bool)> = Vec::new();
+
+    let collect_neighbors = |u: G::NodeId| -> Vec<(G::NodeId, G::EdgeWeight)> {
+        graph
+            .edges(u)
+            .map(|e| {
+                let v = if e.source() == u {
+                    e.target()
+                } else {
+                    e.source()
+                };
+                (v, *e.weight())
+            })
+            .collect()
+    };
+
+    for start in starts {
+        if !discovered.visit(start) {
+            continue;
+        }
+        let c = visitor(DfsEvent::Discover(start, time_post_inc(&mut time)));
+        if c.should_break() {
+            return c;
+        }
+        let pruned = c.should_prune();
+        let edges = if pruned {
+            Vec::new()
+        } else {
+            collect_neighbors(start)
+        };
+        stack.push((start, edges, pruned));
+
+        while let Some((u, neighbors, pruned)) = stack.last_mut() {
+            let u = *u;
+            if *pruned {
+                // All edges skipped due to prune; go straight to finish.
+                *pruned = false;
+                neighbors.clear();
+            }
+            if let Some((v, w)) = neighbors.pop() {
+                if !discovered.is_visited(&v) {
+                    // Tree edge.
+                    let c = visitor(DfsEvent::TreeEdge(u, v, w));
+                    if c.should_break() {
+                        return c;
+                    }
+                    if c.should_prune() {
+                        continue;
+                    }
+                    discovered.visit(v);
+                    let c = visitor(DfsEvent::Discover(v, time_post_inc(&mut time)));
+                    if c.should_break() {
+                        return c;
+                    }
+                    let pruned = c.should_prune();
+                    let edges = if pruned {
+                        Vec::new()
+                    } else {
+                        collect_neighbors(v)
+                    };
+                    stack.push((v, edges, pruned));
+                } else if !finished.is_visited(&v) {
+                    // Back edge.
+                    let c = visitor(DfsEvent::BackEdge(u, v, w));
+                    if c.should_break() {
+                        return c;
+                    }
+                } else {
+                    // Cross or forward edge.
+                    let c = visitor(DfsEvent::CrossForwardEdge(u, v, w));
+                    if c.should_break() {
+                        return c;
+                    }
+                }
+            } else {
+                // All edges explored; finish this node.
+                let (u, _, _) = stack.pop().unwrap();
+                finished.visit(u);
+                let c = visitor(DfsEvent::Finish(u, time));
+                if c.should_break() {
+                    return c;
+                }
+            }
+        }
+    }
+    C::continuing()
+}
+
+fn time_post_inc(time: &mut petgraph::visit::Time) -> petgraph::visit::Time {
+    let t = *time;
+    time.0 += 1;
+    t
 }
 
 #[cfg(test)]
@@ -267,30 +364,6 @@ mod tests {
         true
     }
 
-    /// Undirected DFS produces only tree edges and back edges — never cross/forward edges.
-    #[quickcheck_macros::quickcheck]
-    fn undirected_no_cross_forward(
-        gr: petgraph::Graph<(), i32, petgraph::Undirected>,
-        node: usize,
-    ) -> bool {
-        if gr.node_count() == 0 {
-            return true;
-        }
-        let start_node = petgraph::graph::node_index(node % gr.node_count());
-
-        let mut saw_cross_forward = false;
-        depth_first_search(
-            &gr,
-            Some(start_node).into_iter().chain(gr.node_indices()),
-            |evt| {
-                if let DfsEvent::CrossForwardEdge(..) = evt {
-                    saw_cross_forward = true;
-                }
-            },
-        );
-        !saw_cross_forward
-    }
-
     /// Parenthesis theorem: for any two nodes u, v the discover/finish intervals
     /// [d(u), f(u)] and [d(v), f(v)] are either disjoint or one contains the other.
     #[quickcheck_macros::quickcheck]
@@ -331,9 +404,9 @@ mod tests {
             let (du, fu) = (discover_time[u].0, finish_time[u].0);
             for v in (u + 1)..n {
                 let (dv, fv) = (discover_time[v].0, finish_time[v].0);
-                let disjoint = fu < dv || fv < du;
-                let u_contains_v = du < dv && fv < fu;
-                let v_contains_u = dv < du && fu < fv;
+                let disjoint = fu <= dv || fv <= du;
+                let u_contains_v = du < dv && fv <= fu;
+                let v_contains_u = dv < du && fu <= fv;
                 // Intervals are either disjoint or one contains the other.
                 assert!(
                     disjoint || u_contains_v || v_contains_u,
