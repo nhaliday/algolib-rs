@@ -69,6 +69,30 @@ mod tests {
         assert_eq!(back_edges, vec![(n(1), n(0))]);
     }
 
+    /// Undirected DFS produces only tree edges and back edges — never cross/forward edges.
+    #[quickcheck_macros::quickcheck]
+    fn undirected_no_cross_forward(
+        gr: petgraph::Graph<(), i32, petgraph::Undirected>,
+        node: usize,
+    ) -> bool {
+        if gr.node_count() == 0 {
+            return true;
+        }
+        let start_node = petgraph::graph::node_index(node % gr.node_count());
+
+        let mut saw_cross_forward = false;
+        depth_first_search(
+            &gr,
+            Some(start_node).into_iter().chain(gr.node_indices()),
+            |evt| {
+                if let DfsEvent::CrossForwardEdge(..) = evt {
+                    saw_cross_forward = true;
+                }
+            },
+        );
+        !saw_cross_forward
+    }
+
     fn set<I: IntoIterator>(iter: I) -> HashSet<I::Item>
     where
         I::Item: std::hash::Hash + Eq,
