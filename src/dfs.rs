@@ -33,6 +33,42 @@ mod tests {
     use petgraph::visit::{Time, VisitMap, Visitable};
     use std::collections::HashSet;
 
+    /// Parallel edges 0→1, 0→1: first is a tree edge, second is a forward/cross edge.
+    #[test]
+    fn parallel_edges_tree_and_forward() {
+        let gr = petgraph::Graph::<(), ()>::from_edges([(0, 1, ()), (0, 1, ())]);
+
+        let mut tree_edges = vec![];
+        let mut cross_forward_edges = vec![];
+
+        depth_first_search(&gr, Some(n(0)), |evt| match evt {
+            DfsEvent::TreeEdge(u, v, _) => tree_edges.push((u, v)),
+            DfsEvent::CrossForwardEdge(u, v, _) => cross_forward_edges.push((u, v)),
+            _ => {}
+        });
+
+        assert_eq!(tree_edges, vec![(n(0), n(1))]);
+        assert_eq!(cross_forward_edges, vec![(n(0), n(1))]);
+    }
+
+    /// Cycle 0→1, 1→0: tree edge to 1, back edge to 0.
+    #[test]
+    fn cycle_tree_and_back() {
+        let gr = petgraph::Graph::<(), ()>::from_edges([(0, 1, ()), (1, 0, ())]);
+
+        let mut tree_edges = vec![];
+        let mut back_edges = vec![];
+
+        depth_first_search(&gr, Some(n(0)), |evt| match evt {
+            DfsEvent::TreeEdge(u, v, _) => tree_edges.push((u, v)),
+            DfsEvent::BackEdge(u, v, _) => back_edges.push((u, v)),
+            _ => {}
+        });
+
+        assert_eq!(tree_edges, vec![(n(0), n(1))]);
+        assert_eq!(back_edges, vec![(n(1), n(0))]);
+    }
+
     fn set<I: IntoIterator>(iter: I) -> HashSet<I::Item>
     where
         I::Item: std::hash::Hash + Eq,
