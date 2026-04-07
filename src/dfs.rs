@@ -7,7 +7,8 @@ pub enum DfsEvent<N, W> {
     Discover(N, petgraph::visit::Time),
     TreeEdge(N, N, W),
     BackEdge(N, N, W),
-    CrossForwardEdge(N, N, W),
+    ForwardEdge(N, N, W),
+    CrossEdge(N, N, W),
     Finish(N, petgraph::visit::Time),
 }
 
@@ -17,7 +18,7 @@ pub enum DfsEvent<N, W> {
 /// instead of `IntoNeighbors`, so that edge weights are available.
 pub fn depth_first_search<G, I, F, C>(graph: G, starts: I, mut visitor: F) -> C
 where
-    G: petgraph::visit::IntoEdges + petgraph::visit::Visitable,
+    G: petgraph::visit::IntoEdges + petgraph::visit::Visitable + petgraph::visit::NodeIndexable,
     G::EdgeWeight: Copy,
     I: IntoIterator<Item = G::NodeId>,
     F: FnMut(DfsEvent<G::NodeId, G::EdgeWeight>) -> C,
@@ -28,6 +29,7 @@ where
     let mut time = Time(0);
     let mut discovered = graph.visit_map();
     let mut finished = graph.visit_map();
+    let mut discover_time = vec![Time(usize::MAX); graph.node_bound()];
 
     let mut stack: Vec<(G::NodeId, <G as petgraph::visit::IntoEdges>::Edges, bool)> = Vec::new();
 
@@ -35,7 +37,9 @@ where
         if !discovered.visit(start) {
             continue;
         }
-        let c = visitor(DfsEvent::Discover(start, time_post_inc(&mut time)));
+        let t = time_post_inc(&mut time);
+        discover_time[graph.to_index(start)] = t;
+        let c = visitor(DfsEvent::Discover(start, t));
         if c.should_break() {
             return c;
         }
@@ -63,7 +67,9 @@ where
                         continue;
                     }
                     discovered.visit(v);
-                    let c = visitor(DfsEvent::Discover(v, time_post_inc(&mut time)));
+                    let t = time_post_inc(&mut time);
+                    discover_time[graph.to_index(v)] = t;
+                    let c = visitor(DfsEvent::Discover(v, t));
                     if c.should_break() {
                         return c;
                     }
@@ -74,8 +80,13 @@ where
                     if c.should_break() {
                         return c;
                     }
+                } else if discover_time[graph.to_index(u)] < discover_time[graph.to_index(v)] {
+                    let c = visitor(DfsEvent::ForwardEdge(u, v, w));
+                    if c.should_break() {
+                        return c;
+                    }
                 } else {
-                    let c = visitor(DfsEvent::CrossForwardEdge(u, v, w));
+                    let c = visitor(DfsEvent::CrossEdge(u, v, w));
                     if c.should_break() {
                         return c;
                     }
@@ -112,16 +123,17 @@ mod tests {
         let gr = petgraph::Graph::<(), ()>::from_edges([(0, 1, ()), (0, 1, ())]);
 
         let mut tree_edges = vec![];
-        let mut cross_forward_edges = vec![];
+        let mut forward_edges = vec![];
 
         depth_first_search(&gr, Some(n(0)), |evt| match evt {
             DfsEvent::TreeEdge(u, v, _) => tree_edges.push((u, v)),
-            DfsEvent::CrossForwardEdge(u, v, _) => cross_forward_edges.push((u, v)),
+            DfsEvent::ForwardEdge(u, v, _) => forward_edges.push((u, v)),
+            DfsEvent::CrossEdge(_, _, _) | DfsEvent::BackEdge(_, _, _) => unreachable!(),
             _ => {}
         });
 
         assert_eq!(tree_edges, vec![(n(0), n(1))]);
-        assert_eq!(cross_forward_edges, vec![(n(0), n(1))]);
+        assert_eq!(forward_edges, vec![(n(0), n(1))]);
     }
 
     /// Cycle 0→1, 1→0: tree edge to 1, back edge to 0.
@@ -135,6 +147,7 @@ mod tests {
         depth_first_search(&gr, Some(n(0)), |evt| match evt {
             DfsEvent::TreeEdge(u, v, _) => tree_edges.push((u, v)),
             DfsEvent::BackEdge(u, v, _) => back_edges.push((u, v)),
+            DfsEvent::CrossEdge(_, _, _) | DfsEvent::ForwardEdge(_, _, _) => unreachable!(),
             _ => {}
         });
 
@@ -187,7 +200,7 @@ mod tests {
                 assert!(finish_time[v.index()] == invalid_time);
                 edges.insert((u, v, w));
             }
-            DfsEvent::CrossForwardEdge(u, v, w) => {
+            DfsEvent::ForwardEdge(u, v, w) | DfsEvent::CrossEdge(u, v, w) => {
                 edges.insert((u, v, w));
             }
         });
@@ -321,7 +334,7 @@ mod tests {
                     assert!(finish_time[v.index()] == invalid_time);
                     edges.insert((u, v, w));
                 }
-                DfsEvent::CrossForwardEdge(u, v, w) => {
+                DfsEvent::ForwardEdge(u, v, w) | DfsEvent::CrossEdge(u, v, w) => {
                     edges.insert((u, v, w));
                 }
             },
@@ -407,8 +420,8 @@ mod tests {
         true
     }
 
-    /// In undirected DFS, each tree edge is seen from both endpoints:
-    /// once as a BackEdge (descendant → ancestor) and once as a TreeEdge or CrossForwardEdge
+    /// In undirected DFS, each non-self-loop edge is seen from both endpoints:
+    /// once as a BackEdge (descendant → ancestor) and once as a TreeEdge or ForwardEdge
     /// (ancestor → descendant). These should be in exact bijection.
     #[quickcheck_macros::quickcheck]
     fn undirected_back_edges_biject_with_tree_and_forward(
@@ -422,22 +435,20 @@ mod tests {
             )
         };
 
-        let mut tree_and_cf_edges: Vec<NormalizedEdge> = Vec::new();
+        let mut tree_and_forward_edges: Vec<NormalizedEdge> = Vec::new();
         let mut back_edges: Vec<NormalizedEdge> = Vec::new();
 
         depth_first_search(&gr, gr.node_indices(), |evt| match evt {
-            DfsEvent::TreeEdge(u, v, _) => tree_and_cf_edges.push(normalize(u, v)),
-            DfsEvent::BackEdge(u, v, _) if u != v => back_edges.push(normalize(u, v)),
-            DfsEvent::CrossForwardEdge(u, v, _) => {
-                tree_and_cf_edges.push(normalize(u, v));
+            DfsEvent::TreeEdge(u, v, _) | DfsEvent::ForwardEdge(u, v, _) => {
+                tree_and_forward_edges.push(normalize(u, v));
             }
+            DfsEvent::BackEdge(u, v, _) if u != v => back_edges.push(normalize(u, v)),
             _ => {}
         });
 
-        // Each back edge is the reverse of either a tree edge or a cross/forward edge.
-        tree_and_cf_edges.sort();
+        tree_and_forward_edges.sort();
         back_edges.sort();
 
-        back_edges == tree_and_cf_edges
+        back_edges == tree_and_forward_edges
     }
 }
