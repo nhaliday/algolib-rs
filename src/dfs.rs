@@ -438,11 +438,12 @@ mod tests {
         let mut tree_and_forward_edges: Vec<NormalizedEdge> = Vec::new();
         let mut back_edges: Vec<NormalizedEdge> = Vec::new();
 
-        depth_first_search(&gr, gr.node_indices(), |evt| match evt {
+        depth_first_search(&gr, gr.node_indices(), |event| match event {
             DfsEvent::TreeEdge(u, v, _) | DfsEvent::ForwardEdge(u, v, _) => {
                 tree_and_forward_edges.push(normalize(u, v));
             }
             DfsEvent::BackEdge(u, v, _) if u != v => back_edges.push(normalize(u, v)),
+            DfsEvent::CrossEdge(_, _, _) => unreachable!(),
             _ => {}
         });
 
