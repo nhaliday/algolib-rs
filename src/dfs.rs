@@ -128,7 +128,7 @@ mod tests {
 
     /// Parallel edges 0→1, 0→1: first is a tree edge, second is a forward/cross edge.
     #[test]
-    fn parallel_edges_tree_and_forward() {
+    fn parallel_edges_yield_one_tree_and_one_forward() {
         let gr = petgraph::Graph::<(), ()>::from_edges([(0, 1, ()), (0, 1, ())]);
 
         let mut tree_edges = vec![];
@@ -146,7 +146,7 @@ mod tests {
 
     /// Cycle 0→1, 1→0: tree edge to 1, back edge to 0.
     #[test]
-    fn cycle_tree_and_back() {
+    fn cycle_yields_one_tree_and_one_back() {
         let gr = petgraph::Graph::<(), ()>::from_edges([(0, 1, ()), (1, 0, ())]);
 
         let mut tree_edges = vec![];
@@ -173,7 +173,7 @@ mod tests {
     /// verify event invariants (discover/finish times, edge classification)
     /// on a hand-crafted weighted directed graph.
     #[test]
-    fn event_invariants() {
+    fn events_satisfy_invariants() {
         let gr = petgraph::Graph::<(), i32>::from_edges([
             (0, 5, 10),
             (0, 2, 20),
@@ -227,7 +227,7 @@ mod tests {
     /// Parallel of petgraph's tests/graph.rs::dfs_visit, second sub-test:
     /// find a path using Control::Break, verify early termination.
     #[test]
-    fn path_finding_with_break() {
+    fn break_finds_path_via_early_termination() {
         use petgraph::visit::Control;
 
         let gr = petgraph::Graph::<(), i32>::from_edges([
@@ -275,7 +275,7 @@ mod tests {
     /// Parallel of petgraph's tests/graph.rs::dfs_visit, third sub-test:
     /// prune a node and verify its subtree is not reached.
     #[test]
-    fn pruning() {
+    fn prune_skips_subtree() {
         use petgraph::visit::Control;
 
         let gr = petgraph::Graph::<(), i32>::from_edges([
@@ -311,7 +311,7 @@ mod tests {
     /// Parallel of petgraph's tests/quickcheck.rs::dfs_visit:
     /// property-based test verifying event invariants on random weighted graphs.
     #[quickcheck_macros::quickcheck]
-    fn event_invariants_quickcheck(gr: petgraph::Graph<(), i32>, node: usize) -> bool {
+    fn random_graphs_satisfy_event_invariants(gr: petgraph::Graph<(), i32>, node: usize) -> bool {
         if gr.node_count() == 0 {
             return true;
         }
@@ -363,7 +363,7 @@ mod tests {
     /// Parenthesis theorem: for any two nodes u, v the discover/finish intervals
     /// [d(u), f(u)] and [d(v), f(v)] are either disjoint or one contains the other.
     #[quickcheck_macros::quickcheck]
-    fn parenthesis_theorem(gr: petgraph::Graph<(), i32>, node: usize) -> bool {
+    fn discover_finish_intervals_satisfy_parenthesis_theorem(gr: petgraph::Graph<(), i32>, node: usize) -> bool {
         if gr.node_count() == 0 {
             return true;
         }
@@ -428,7 +428,7 @@ mod tests {
     /// once as a BackEdge (descendant → ancestor) and once as a TreeEdge or CrossForwardEdge
     /// (ancestor → descendant). These should be in exact bijection.
     #[quickcheck_macros::quickcheck]
-    fn undirected_back_edge_bijection(gr: petgraph::Graph<(), i32, petgraph::Undirected>) -> bool {
+    fn undirected_back_edges_biject_with_tree_and_forward(gr: petgraph::Graph<(), i32, petgraph::Undirected>) -> bool {
         type NormalizedEdge = (usize, usize, i32);
         let normalize = |u: petgraph::graph::NodeIndex, v: petgraph::graph::NodeIndex, w: i32| {
             (
