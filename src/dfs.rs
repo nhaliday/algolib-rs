@@ -70,7 +70,6 @@ where
             }
             if let Some((v, w)) = neighbors.pop() {
                 if !discovered.is_visited(&v) {
-                    // Tree edge.
                     let c = visitor(DfsEvent::TreeEdge(u, v, w));
                     if c.should_break() {
                         return c;
@@ -91,20 +90,17 @@ where
                     };
                     stack.push((v, edges, pruned));
                 } else if !finished.is_visited(&v) {
-                    // Back edge.
                     let c = visitor(DfsEvent::BackEdge(u, v, w));
                     if c.should_break() {
                         return c;
                     }
                 } else {
-                    // Cross or forward edge.
                     let c = visitor(DfsEvent::CrossForwardEdge(u, v, w));
                     if c.should_break() {
                         return c;
                     }
                 }
             } else {
-                // All edges explored; finish this node.
                 let (u, _, _) = stack.pop().unwrap();
                 finished.visit(u);
                 let c = visitor(DfsEvent::Finish(u, time));
@@ -426,5 +422,38 @@ mod tests {
             }
         }
         true
+    }
+
+    /// In undirected DFS, each tree edge is seen from both endpoints:
+    /// once as a BackEdge (descendant → ancestor) and once as a TreeEdge or CrossForwardEdge
+    /// (ancestor → descendant). These should be in exact bijection.
+    #[quickcheck_macros::quickcheck]
+    fn undirected_back_edge_bijection(gr: petgraph::Graph<(), i32, petgraph::Undirected>) -> bool {
+        type NormalizedEdge = (usize, usize, i32);
+        let normalize = |u: petgraph::graph::NodeIndex, v: petgraph::graph::NodeIndex, w: i32| {
+            (
+                std::cmp::min(u.index(), v.index()),
+                std::cmp::max(u.index(), v.index()),
+                w,
+            )
+        };
+
+        let mut tree_and_cf_edges: Vec<NormalizedEdge> = Vec::new();
+        let mut back_edges: Vec<NormalizedEdge> = Vec::new();
+
+        depth_first_search(&gr, gr.node_indices(), |evt| match evt {
+            DfsEvent::TreeEdge(u, v, w) => tree_and_cf_edges.push(normalize(u, v, w)),
+            DfsEvent::BackEdge(u, v, w) if u != v => back_edges.push(normalize(u, v, w)),
+            DfsEvent::CrossForwardEdge(u, v, w) => {
+                tree_and_cf_edges.push(normalize(u, v, w));
+            }
+            _ => {}
+        });
+
+        // Each back edge is the reverse of either a tree edge or a cross/forward edge.
+        tree_and_cf_edges.sort();
+        back_edges.sort();
+
+        back_edges == tree_and_cf_edges
     }
 }
