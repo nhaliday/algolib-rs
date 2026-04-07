@@ -363,7 +363,10 @@ mod tests {
     /// Parenthesis theorem: for any two nodes u, v the discover/finish intervals
     /// [d(u), f(u)] and [d(v), f(v)] are either disjoint or one contains the other.
     #[quickcheck_macros::quickcheck]
-    fn discover_finish_intervals_satisfy_parenthesis_theorem(gr: petgraph::Graph<(), i32>, node: usize) -> bool {
+    fn discover_finish_intervals_satisfy_parenthesis_theorem(
+        gr: petgraph::Graph<(), ()>,
+        node: usize,
+    ) -> bool {
         if gr.node_count() == 0 {
             return true;
         }
@@ -428,13 +431,14 @@ mod tests {
     /// once as a BackEdge (descendant → ancestor) and once as a TreeEdge or CrossForwardEdge
     /// (ancestor → descendant). These should be in exact bijection.
     #[quickcheck_macros::quickcheck]
-    fn undirected_back_edges_biject_with_tree_and_forward(gr: petgraph::Graph<(), i32, petgraph::Undirected>) -> bool {
-        type NormalizedEdge = (usize, usize, i32);
-        let normalize = |u: petgraph::graph::NodeIndex, v: petgraph::graph::NodeIndex, w: i32| {
+    fn undirected_back_edges_biject_with_tree_and_forward(
+        gr: petgraph::Graph<(), (), petgraph::Undirected>,
+    ) -> bool {
+        type NormalizedEdge = (usize, usize);
+        let normalize = |u: petgraph::graph::NodeIndex, v: petgraph::graph::NodeIndex| {
             (
                 std::cmp::min(u.index(), v.index()),
                 std::cmp::max(u.index(), v.index()),
-                w,
             )
         };
 
@@ -442,10 +446,10 @@ mod tests {
         let mut back_edges: Vec<NormalizedEdge> = Vec::new();
 
         depth_first_search(&gr, gr.node_indices(), |evt| match evt {
-            DfsEvent::TreeEdge(u, v, w) => tree_and_cf_edges.push(normalize(u, v, w)),
-            DfsEvent::BackEdge(u, v, w) if u != v => back_edges.push(normalize(u, v, w)),
-            DfsEvent::CrossForwardEdge(u, v, w) => {
-                tree_and_cf_edges.push(normalize(u, v, w));
+            DfsEvent::TreeEdge(u, v, _) => tree_and_cf_edges.push(normalize(u, v)),
+            DfsEvent::BackEdge(u, v, _) if u != v => back_edges.push(normalize(u, v)),
+            DfsEvent::CrossForwardEdge(u, v, _) => {
+                tree_and_cf_edges.push(normalize(u, v));
             }
             _ => {}
         });
