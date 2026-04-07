@@ -29,21 +29,7 @@ where
     let mut discovered = graph.visit_map();
     let mut finished = graph.visit_map();
 
-    let mut stack: Vec<(G::NodeId, Vec<(G::NodeId, G::EdgeWeight)>, bool)> = Vec::new();
-
-    let collect_neighbors = |u: G::NodeId| -> Vec<(G::NodeId, G::EdgeWeight)> {
-        graph
-            .edges(u)
-            .map(|e| {
-                let v = if e.source() == u {
-                    e.target()
-                } else {
-                    e.source()
-                };
-                (v, *e.weight())
-            })
-            .collect()
-    };
+    let mut stack: Vec<(G::NodeId, <G as petgraph::visit::IntoEdges>::Edges, bool)> = Vec::new();
 
     for start in starts {
         if !discovered.visit(start) {
@@ -54,21 +40,20 @@ where
             return c;
         }
         let pruned = c.should_prune();
-        let edges = if pruned {
-            Vec::new()
-        } else {
-            collect_neighbors(start)
-        };
-        stack.push((start, edges, pruned));
+        stack.push((start, graph.edges(start), pruned));
 
-        while let Some((u, neighbors, pruned)) = stack.last_mut() {
-            let u = *u;
-            if *pruned {
-                // All edges skipped due to prune; go straight to finish.
-                *pruned = false;
-                neighbors.clear();
-            }
-            if let Some((v, w)) = neighbors.pop() {
+        while let Some(&mut (u, ref mut edges, pruned)) = stack.last_mut() {
+            let mut next = || {
+                edges.next().map(|e| {
+                    let v = if e.source() == u {
+                        e.target()
+                    } else {
+                        e.source()
+                    };
+                    (v, *e.weight())
+                })
+            };
+            if !pruned && let Some((v, w)) = next() {
                 if !discovered.is_visited(&v) {
                     let c = visitor(DfsEvent::TreeEdge(u, v, w));
                     if c.should_break() {
@@ -83,12 +68,7 @@ where
                         return c;
                     }
                     let pruned = c.should_prune();
-                    let edges = if pruned {
-                        Vec::new()
-                    } else {
-                        collect_neighbors(v)
-                    };
-                    stack.push((v, edges, pruned));
+                    stack.push((v, graph.edges(v), pruned));
                 } else if !finished.is_visited(&v) {
                     let c = visitor(DfsEvent::BackEdge(u, v, w));
                     if c.should_break() {
