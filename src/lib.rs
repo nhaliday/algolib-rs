@@ -1,3 +1,2 @@
-pub mod dfs;
+pub mod graph;
 pub mod util;
-pub use util::*;

@@ -1,3 +1,5 @@
+use proptest::prelude::Strategy;
+
 /// A DFS visitor event that includes edge weights.
 ///
 /// For edge events, `parent` is the node closer to the tree root and `child`
@@ -110,6 +112,174 @@ fn time_post_inc(time: &mut petgraph::visit::Time) -> petgraph::visit::Time {
     t
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PruferEncodeError {
+    #[error("Prüfer encoding requires at least 2 nodes, got {node_count}")]
+    TooFewNodes { node_count: usize },
+    #[error("expected {expected} edges for a tree on {node_count} nodes, got {actual}")]
+    WrongEdgeCount {
+        node_count: usize,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("graph is not connected")]
+    Disconnected,
+}
+
+/// Encode a labeled tree as its Prüfer sequence.
+///
+/// The input must be a tree: an undirected, connected graph on nodes `0..n`
+/// with exactly `n - 1` edges. Returns an error if any of these conditions
+/// are violated.
+///
+/// Runs in O(n) time using the "pointer" algorithm of Heinz Prüfer (1918).
+pub fn prufer_encode(
+    tree: &petgraph::graph::UnGraph<(), (), usize>,
+) -> Result<Vec<usize>, PruferEncodeError> {
+    let n = tree.node_count();
+    if n < 2 {
+        return Err(PruferEncodeError::TooFewNodes { node_count: n });
+    }
+    let expected_edge_count = n - 1;
+    if tree.edge_count() != expected_edge_count {
+        return Err(PruferEncodeError::WrongEdgeCount {
+            node_count: n,
+            expected: expected_edge_count,
+            actual: tree.edge_count(),
+        });
+    }
+    // Check connectivity via DFS.
+    let mut count = 0usize;
+    petgraph::visit::depth_first_search(tree, Some(petgraph::graph::NodeIndex::new(0)), |event| {
+        if let petgraph::visit::DfsEvent::Discover(_, _) = event {
+            count += 1;
+        }
+    });
+    if count != n {
+        return Err(PruferEncodeError::Disconnected);
+    }
+    if n == 2 {
+        return Ok(vec![]);
+    }
+    let mut degree = vec![0usize; n];
+    for edge in tree.edge_references() {
+        use petgraph::visit::EdgeRef;
+        degree[edge.source().index()] += 1;
+        degree[edge.target().index()] += 1;
+    }
+
+    let mut sequence = Vec::with_capacity(n - 2);
+    // Pointer to the smallest leaf candidate.
+    let mut leaf = degree.iter().position(|&d| d == 1).unwrap();
+
+    for _ in 0..n - 2 {
+        // Find the neighbor of the current leaf.
+        let neighbor = tree
+            .neighbors(petgraph::graph::NodeIndex::new(leaf))
+            .find(|&v| degree[v.index()] > 0)
+            .unwrap()
+            .index();
+        sequence.push(neighbor);
+        degree[leaf] = 0;
+        degree[neighbor] -= 1;
+
+        // If the neighbor became a leaf and is smaller than the current pointer,
+        // use it directly (avoids scanning forward).
+        if degree[neighbor] == 1 && neighbor < leaf {
+            leaf = neighbor;
+        } else {
+            // Advance the pointer to the next leaf.
+            leaf += 1;
+            while leaf < n && degree[leaf] != 1 {
+                leaf += 1;
+            }
+        }
+    }
+    Ok(sequence)
+}
+
+/// Decode a Prüfer sequence into a labeled tree.
+///
+/// `sequence` must contain values in `0..n` where `n = sequence.len() + 2`.
+/// Returns an undirected graph on `n` nodes with `n - 1` edges.
+///
+/// Runs in O(n) time using the inverse of the encoding pointer algorithm.
+pub fn prufer_decode(sequence: &[usize]) -> petgraph::graph::UnGraph<(), (), usize> {
+    let n = sequence.len() + 2;
+    let mut graph = petgraph::Graph::with_capacity(n, n.saturating_sub(1));
+    graph.extend_with_edges(std::iter::empty::<(usize, usize)>());
+    for _ in 0..n {
+        graph.add_node(());
+    }
+
+    if n == 2 {
+        graph.add_edge(
+            petgraph::graph::NodeIndex::new(0),
+            petgraph::graph::NodeIndex::new(1),
+            (),
+        );
+        return graph;
+    }
+
+    let mut degree = vec![1usize; n];
+    for &v in sequence {
+        degree[v] += 1;
+    }
+
+    let mut leaf = degree.iter().position(|&d| d == 1).unwrap();
+
+    for &v in sequence {
+        graph.add_edge(
+            petgraph::graph::NodeIndex::new(leaf),
+            petgraph::graph::NodeIndex::new(v),
+            (),
+        );
+        degree[leaf] = 0;
+        degree[v] -= 1;
+
+        if degree[v] == 1 && v < leaf {
+            leaf = v;
+        } else {
+            leaf += 1;
+            while leaf < n && degree[leaf] != 1 {
+                leaf += 1;
+            }
+        }
+    }
+
+    // Connect the last two remaining nodes.
+    let remaining: Vec<usize> = degree
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| **d == 1)
+        .map(|(i, _)| i)
+        .collect();
+    debug_assert_eq!(remaining.len(), 2);
+    graph.add_edge(
+        petgraph::graph::NodeIndex::new(remaining[0]),
+        petgraph::graph::NodeIndex::new(remaining[1]),
+        (),
+    );
+
+    graph
+}
+
+pub fn arbitrary_tree(
+    n: usize,
+) -> impl proptest::strategy::Strategy<Value = petgraph::graph::UnGraph<(), (), usize>> {
+    if n <= 1 {
+        let mut g = petgraph::graph::UnGraph::<(), (), usize>::default();
+        for _ in 0..n {
+            g.add_node(());
+        }
+        proptest::strategy::Strategy::boxed(proptest::strategy::Just(g))
+    } else {
+        proptest::strategy::Strategy::boxed(
+            proptest::collection::vec(0..n, n - 2).prop_map(|seq| prufer_decode(&seq)),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,7 +289,7 @@ mod tests {
 
     /// Parallel edges 0→1, 0→1: first is a tree edge, second is a forward/cross edge.
     #[test]
-    fn parallel_edges_yield_one_tree_and_one_forward() {
+    fn dfs_classifies_parallel_edges_as_one_tree_and_one_forward() {
         let gr = petgraph::Graph::<(), ()>::from_edges([(0, 1, ()), (0, 1, ())]);
 
         let mut tree_edges = vec![];
@@ -138,7 +308,7 @@ mod tests {
 
     /// Cycle 0→1, 1→0: tree edge to 1, back edge to 0.
     #[test]
-    fn cycle_yields_one_tree_and_one_back() {
+    fn dfs_classifies_cycle_as_one_tree_and_one_back() {
         let gr = petgraph::Graph::<(), ()>::from_edges([(0, 1, ()), (1, 0, ())]);
 
         let mut tree_edges = vec![];
@@ -166,7 +336,7 @@ mod tests {
     /// verify event invariants (discover/finish times, edge classification)
     /// on a hand-crafted weighted directed graph.
     #[test]
-    fn events_satisfy_invariants() {
+    fn dfs_events_satisfy_invariants() {
         let gr = petgraph::Graph::<(), i32>::from_edges([
             (0, 5, 10),
             (0, 2, 20),
@@ -220,7 +390,7 @@ mod tests {
     /// Parallel of petgraph's tests/graph.rs::dfs_visit, second sub-test:
     /// find a path using Control::Break, verify early termination.
     #[test]
-    fn break_finds_path_via_early_termination() {
+    fn dfs_break_finds_path_via_early_termination() {
         use petgraph::visit::Control;
 
         let gr = petgraph::Graph::<(), i32>::from_edges([
@@ -268,7 +438,7 @@ mod tests {
     /// Parallel of petgraph's tests/graph.rs::dfs_visit, third sub-test:
     /// prune a node and verify its subtree is not reached.
     #[test]
-    fn prune_skips_subtree() {
+    fn dfs_prune_skips_subtree() {
         use petgraph::visit::Control;
 
         let gr = petgraph::Graph::<(), i32>::from_edges([
@@ -304,7 +474,10 @@ mod tests {
     /// Parallel of petgraph's tests/quickcheck.rs::dfs_visit:
     /// property-based test verifying event invariants on random weighted graphs.
     #[quickcheck_macros::quickcheck]
-    fn random_graphs_satisfy_event_invariants(gr: petgraph::Graph<(), i32>, node: usize) -> bool {
+    fn dfs_random_graphs_satisfy_event_invariants(
+        gr: petgraph::Graph<(), i32>,
+        node: usize,
+    ) -> bool {
         if gr.node_count() == 0 {
             return true;
         }
@@ -356,7 +529,7 @@ mod tests {
     /// Parenthesis theorem: for any two nodes u, v the discover/finish intervals
     /// [d(u), f(u)] and [d(v), f(v)] are either disjoint or one contains the other.
     #[quickcheck_macros::quickcheck]
-    fn discover_finish_intervals_satisfy_parenthesis_theorem(
+    fn dfs_discover_finish_intervals_satisfy_parenthesis_theorem(
         gr: petgraph::Graph<(), ()>,
         node: usize,
     ) -> bool {
@@ -424,7 +597,7 @@ mod tests {
     /// once as a BackEdge (descendant → ancestor) and once as a TreeEdge or ForwardEdge
     /// (ancestor → descendant). These should be in exact bijection.
     #[quickcheck_macros::quickcheck]
-    fn undirected_back_edges_biject_with_tree_and_forward(
+    fn dfs_undirected_back_edges_biject_with_tree_and_forward(
         gr: petgraph::Graph<(), (), petgraph::Undirected>,
     ) -> bool {
         type NormalizedEdge = (usize, usize);
@@ -451,5 +624,80 @@ mod tests {
         back_edges.sort();
 
         back_edges == tree_and_forward_edges
+    }
+
+    /// Prüfer encoding of the path 0-1-2-3-4 is [1, 2, 3].
+    #[test]
+    fn prufer_encode_produces_correct_path_sequence() {
+        let graph =
+            petgraph::graph::UnGraph::<(), (), usize>::from_edges([(0, 1), (1, 2), (2, 3), (3, 4)]);
+        assert_eq!(prufer_encode(&graph).unwrap(), vec![1, 2, 3]);
+    }
+
+    /// Prüfer encoding of the star graph (center=0, leaves=1..5) is [0, 0, 0].
+    #[test]
+    fn prufer_encode_produces_correct_star_sequence() {
+        let graph =
+            petgraph::graph::UnGraph::<(), (), usize>::from_edges([(0, 1), (0, 2), (0, 3), (0, 4)]);
+        assert_eq!(prufer_encode(&graph).unwrap(), vec![0, 0, 0]);
+    }
+
+    /// Decode([1, 2, 3]) reconstructs a path graph, and re-encoding yields [1, 2, 3].
+    #[test]
+    fn prufer_decode_roundtrips_path_sequence() {
+        let sequence = vec![1, 2, 3];
+        let graph = prufer_decode(&sequence);
+        assert_eq!(graph.node_count(), 5);
+        assert_eq!(graph.edge_count(), 4);
+        assert_eq!(prufer_encode(&graph).unwrap(), sequence);
+    }
+
+    /// Edge case: empty sequence decodes to a single-edge tree on 2 nodes.
+    #[test]
+    fn prufer_decode_handles_two_node_edge_case() {
+        let empty: Vec<usize> = vec![];
+
+        let g = prufer_decode(&empty[..]);
+        assert_eq!(g.node_count(), 2);
+        assert_eq!(g.edge_count(), 1);
+        assert_eq!(prufer_encode(&g).unwrap(), empty);
+    }
+
+    #[test]
+    fn prufer_encode_decode_roundtrips_arbitrary_sequences() {
+        let n = 20;
+        let strategy = proptest::collection::vec(0..n, n - 2);
+
+        let mut test_runner =
+            proptest::test_runner::TestRunner::new(proptest::test_runner::Config {
+                source_file: Some(file!()),
+                ..proptest::test_runner::Config::default()
+            });
+        test_runner
+            .run(&strategy, |sequence| {
+                let graph = prufer_decode(&sequence);
+                proptest::prop_assert_eq!(graph.node_count(), n);
+                proptest::prop_assert_eq!(graph.edge_count(), n - 1);
+                let re_encoded = prufer_encode(&graph).unwrap();
+                proptest::prop_assert_eq!(re_encoded, sequence);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn prufer_encode_handles_arbitrary_tree() {
+        let mut test_runner =
+            proptest::test_runner::TestRunner::new(proptest::test_runner::Config {
+                source_file: Some(file!()),
+                ..proptest::test_runner::Config::default()
+            });
+
+        test_runner
+            .run(&arbitrary_tree(20), |tree| {
+                proptest::prop_assert!(prufer_encode(&tree).is_ok());
+                Ok(())
+            })
+            .unwrap();
     }
 }
