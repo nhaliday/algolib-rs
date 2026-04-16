@@ -262,7 +262,7 @@ pub fn prufer_decode(sequence: &[usize]) -> petgraph::graph::UnGraph<(), (), usi
     graph
 }
 
-#[cfg(feature = "proptest")]
+#[cfg(feature = "testing")]
 pub fn arbitrary_tree(
     n: usize,
 ) -> impl proptest::strategy::Strategy<Value = petgraph::graph::UnGraph<(), (), usize>> {
@@ -686,6 +686,7 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(feature = "testing")]
     #[test]
     fn prufer_encode_handles_arbitrary_tree() {
         let mut test_runner =

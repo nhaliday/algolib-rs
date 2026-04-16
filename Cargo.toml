@@ -83,6 +83,7 @@ testing = ["proptest"]
 
 [dev-dependencies]
 petgraph = { version = "=0.8.2", features = ["quickcheck"] }
+proptest = "1.10.0"
 quickcheck = "0.8"
 quickcheck_macros = "0.8"
 
