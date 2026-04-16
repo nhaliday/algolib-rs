@@ -1,5 +1,3 @@
-use proptest::prelude::Strategy;
-
 /// A DFS visitor event that includes edge weights.
 ///
 /// For edge events, `parent` is the node closer to the tree root and `child`
@@ -264,9 +262,12 @@ pub fn prufer_decode(sequence: &[usize]) -> petgraph::graph::UnGraph<(), (), usi
     graph
 }
 
+#[cfg(feature = "proptest")]
 pub fn arbitrary_tree(
     n: usize,
 ) -> impl proptest::strategy::Strategy<Value = petgraph::graph::UnGraph<(), (), usize>> {
+    use proptest::prelude::Strategy;
+
     if n <= 1 {
         let mut g = petgraph::graph::UnGraph::<(), (), usize>::default();
         for _ in 0..n {
