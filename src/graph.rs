@@ -33,6 +33,12 @@ where
 
     let mut stack: Vec<(G::NodeId, <G as petgraph::visit::IntoEdges>::Edges, bool)> = Vec::new();
 
+    fn time_post_inc(time: &mut petgraph::visit::Time) -> petgraph::visit::Time {
+        let t = *time;
+        time.0 += 1;
+        t
+    }
+
     for start in starts {
         if !discovered.visit(start) {
             continue;
@@ -102,12 +108,6 @@ where
         }
     }
     C::continuing()
-}
-
-fn time_post_inc(time: &mut petgraph::visit::Time) -> petgraph::visit::Time {
-    let t = *time;
-    time.0 += 1;
-    t
 }
 
 #[derive(Debug, thiserror::Error)]
