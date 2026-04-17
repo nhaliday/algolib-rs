@@ -2,6 +2,7 @@
 name = "algolib-rs"
 version = "0.1.1"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 proptest = { version = "1.10.0", optional = true }
